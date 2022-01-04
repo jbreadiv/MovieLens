@@ -91,14 +91,14 @@ user_avgs <- edx %>%
 user_avgs
 
 # Generate ratings including bias
-predicted_ratings <- validation %>% 
+ratingpredict <- validation %>% 
   left_join(fit, by='movieId') %>%
   left_join(user_avgs, by='userId') %>%
   mutate(pred = mu_hat + fit + user_avgs) %>%
   pull(pred)
 
 # RMSE of movie effect
-RMSE(predicted_ratings, validation$rating)
+RMSE(ratingpredict, validation$rating)
 
 # Regularisation of the data
 lambdas <- seq(from=0, to=10, by=0.25)
@@ -145,9 +145,6 @@ ratingpredict1 <-
   pull(pred)
 
 RMSE(ratingpredict1, validation$rating)
-
-
-
 
 
 

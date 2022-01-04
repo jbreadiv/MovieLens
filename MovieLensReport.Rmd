@@ -1,0 +1,138 @@
+---
+title: "MovieLens Project"
+author: "John B Read"
+date: "03/01/2022"
+output: pdf_document
+---
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+```
+```{r setup, include=FALSE}
+load("~/Documents/GitHub/MovieLens/.RData")
+library(tidyverse)
+library(caret)
+library(data.table)
+knitr::opts_chunk$set(echo = FALSE)
+```
+## Introduction
+
+This project is undertaken to accomplish a requirement of the capstone project for the HarvardX Data Science course. This project builds upon previous modules within the course that have explored movie ratings and the algorithms used by movie service providers to generate recommendations for customers (see Chapter 33.7 for a discussion of how this has been done by Netflix). Using a dataset comprising movie rating (MovieLens), this project demonstrates how Machine Learning is a useful tool for predicting movie ratings by users when dataset size is unwieldy. In developing a predictive algorithm, the project will subsequently test and validate the algorithm against the true values within the dataset using Root-Mean-Square Error (RMSE). 
+
+## Methods
+
+This project incorporates the MovieLens 10M dataset. Which according to GroupLens (2022, para. 1), is a "Stable benchmark dataset. 10 million ratings and 100,000 tag applications applied to 10,000 movies by 72,000 users. Released 1/2009." As discussed in the introduction, this dataset will be used to test and validate a Machine Learning algorithm for predicting movie ratings. To do this, the dataset will be split. First, into a training section (90%) that has 9,000,055 rows and 6 columns. Then, into a test section (10%) that has 999,999 rows and 6 columns. 
+
+```{r glimpse_test, echo=TRUE}
+glimpse(capstone)
+```
+```{r glimpse_train, echo=TRUE}
+glimpse(validation)
+```
+
+With these two data sections, Root-Mean-Square Error (RMSE) will be used to test and validate the accuracy of the algorithm. There are multiple ways that an Algorithm can be modeled. This project will first incorporate a simple algorithm that assumes that movie ratings will remain the same across the reviewers. This can be understood as the following equation:
+\begin{equation}
+ Y_{u,i} = \mu + \varepsilon_{u,i}
+ \end{equation}
+"where $\varepsilon_{u,i}$ independent errors sampled from the same distribution centered at 0 and $\mu$ the “true” rating for all movies. We know that the estimate that minimizes the RMSE is the least squares estimate of $\mu$" (Irizarry, 2019, chp. 33.7.4).
+
+```{r mu_hat, echo=TRUE}
+mu_hat <- mean(capstone$rating)
+naive_rmse <- RMSE(validation$rating, mu_hat)
+naive_rmse
+```
+
+This algorithm appears to overfit with an RMSE of over 1. So a more advanced algorithm will be applied to attempt to gain a lower RMSE. This second algorithm incorporates a movies effect (or bias) as denoted by b_i. This new algorithm equation appears as:
+\begin{equation}
+ Y_{u,i} = \mu + b_i + \varepsilon_{u,i}
+ \end{equation}
+This equation could be run as a linear model. However, Irizarry (2019) cautions that due to large amount of effect/bias within the dataset this method will take an exorbitant amount of time to run. As such, we create b_i (fit) for each movie rank and then predict ratings for $\mu$ and b_i.
+```{r b_i, echo=TRUE}
+fit <- capstone %>%
+   group_by(movieId) %>%
+   summarize(fit = mean(rating - mu_hat))
+
+ratingpredict <- validation %>% 
+   left_join(fit, by='movieId') %>%
+   mutate(pred = mu_hat + fit) %>%
+   pull(pred)
+ 
+RMSE(validation$rating, ratingpredict)
+```
+
+This algorithm can be further fine-tuned through the inclusion of user effects/bias. This can be accomplished through the inclusion of the user specific effect/bias variable b_u (user_avgs).
+\begin{equation}
+Y_{u,i} = \mu + b_i + b_u + \varepsilon_{u,i}
+ \end{equation}
+The variable b_u will be calculated as the average of:
+\begin{equation}
+y_{u,i} - \hat{\mu} - \hat{b}_i
+ \end{equation}
+```{r b_u, echo=TRUE}
+user_avgs <- capstone %>% 
+   left_join(fit, by='movieId') %>%
+   group_by(userId) %>%
+   summarize(user_avgs = mean(rating - mu_hat - fit))
+
+ratingpredict <- validation %>% 
+   left_join(fit, by='movieId') %>%
+   left_join(user_avgs, by='userId') %>%
+   mutate(pred = mu_hat + fit + user_avgs) %>%
+   pull(pred)
+ 
+RMSE(validation$rating, ratingpredict)
+```
+
+While a significant improvement in RMSE was observed with the more advanced algorithm that included both movie and user effect/bias. The algorithm can be further tailored through regularisation. As Irizarry (2019) notes, "regularization permits us to penalize large estimates that are formed using small sample sizes" (chp. 33.9.2). This allows for for movies with few reviews to be penalised such that the effect on b_i is reduced by ratings with high  uncertainty. Similarly, regularization allows for penalisation of effects on b_u. Combining these through regularization provides the following algorithm:
+\begin{equation}
+\sum_{u,i} \left(y_{u,i} - \mu - b_i - b_u \right)^2 + \lambda \left(\sum_{i} b_i^2 + \sum_{u} b_u^2\right)
+\end{equation}
+In this equation the lambda ($\lambda$) is identified through cross-validation and RMSE is calculated with each lambda. Then a plot is generated and lowest RMSE identified.
+```{r lambda, echo=TRUE}
+lambdas <- seq(from=0, to=10, by=0.25)
+qplot(lambdas, rmses)
+min(rmses)
+```
+
+The lambda for the corresponding minimum RMSE is 5.25.
+
+## Results
+
+After deriving the lambda that corresponds to the minimum RMSE, the algorithm with regularisation of movie and user effects/bias was run with lambda 5.25 (see below) which provided an RMSE of 0.864817.
+
+```{r final, echo=TRUE}
+l <- lambdas[which.min(rmses)]
+ 
+fit1 <- capstone %>% 
+   group_by(movieId) %>%
+   summarize(fit1 = sum(rating - mu_hat)/(n()+l))
+ 
+user_avgs1 <- capstone %>% 
+   left_join(fit1, by="movieId") %>%
+   group_by(userId) %>%
+   summarize(user_avgs1 = sum(rating - fit1 - mu_hat)/(n()+l))
+ 
+ratingpredict1 <- 
+   validation %>% 
+   left_join(fit1, by = "movieId") %>%
+   left_join(user_avgs1, by = "userId") %>%
+   mutate(pred = mu_hat + fit1 + user_avgs1) %>%
+   pull(pred)
+ 
+RMSE(ratingpredict1, validation$rating)
+```
+|Algorithm                   |RMSE            |
+|----------------------------|----------------|
+|First Model                 |1.0612          |
+|Movie Bias                  |0.9439          |
+|User Bias                   |0.8654          |
+|Regularised Movie/User Bias |0.8648          |
+
+## Conclusion
+
+As a requirement of the Capstone HarvardX Data Science course, this report demonstrates how incorporating Machine Learning to predict movie ratings by user can be effective. In evaluating the MovieLens 10M dataset through the construction of and use of multiple predictive algorithms (while accounting for effects/bias of both ratings and users and through the incorporation of regularisation), this report demonstrates that RMSE can be reduced and that the algorithm can be effective in predicting a users movie ratings. However, this report is not without limitations especially as it required the use of regularisation. The dataset used has inherent issues especially pertaining to how some movies have an extreme under and over-representation of number of reviews. The dataset would be benefited by more reviews of under-represented movies to provide the algorithm a more balanced dataset. Future research should continue to evaluate how algorithms can be further fine-tuned as well as may be benefited by generating algorithms that are limited to each genre of movie as this may demonstrate greater predictive power.
+
+## References
+
+GroupLens. (2022). MovieLens 10M Dataset. GroupLens.         https://grouplens.org/datasets/movielens/10m/
+Irizarry, R. A. (2019). Introduction to Data Science. CRC Press. https://rafalab.github.io/dsbook/index.html
+
